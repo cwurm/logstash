@@ -2,6 +2,7 @@
 require 'logstash/errors'
 require "treetop"
 require "logstash/settings"
+require "logstash/config/string_escape"
 
 require "logstash/compiler/treetop_monkeypatches"
 
@@ -38,7 +39,7 @@ module LogStash; module Config; module AST
   end
 
   class Config < Node
-    def compile
+    def compile(settings)
       LogStash::Config::AST.deferred_conditionals = []
       LogStash::Config::AST.deferred_conditionals_index = 0
       LogStash::Config::AST.plugin_instance_index = 0
@@ -55,7 +56,7 @@ module LogStash; module Config; module AST
 
       sections = recursive_select(LogStash::Config::AST::PluginSection)
       sections.each do |s|
-        code << s.compile_initializer
+        code << s.compile_initializer(settings)
       end
 
       # start inputs
@@ -73,7 +74,7 @@ module LogStash; module Config; module AST
         definitions << "  @logger.debug? && @logger.debug(\"#{type} received\", \"event\" => event.to_hash)"
 
         sections.select { |s| s.plugin_type.text_value == type }.each do |s|
-          definitions << s.compile.split("\n", -1).map { |e| "  #{e}" }
+          definitions << s.compile(settings).split("\n", -1).map { |e| "  #{e}" }
         end
 
         definitions << "  events" if type == "filter"
@@ -99,14 +100,13 @@ module LogStash; module Config; module AST
     end
 
     # Generate ruby code to initialize all the plugins.
-    def compile_initializer
+    def compile_initializer(settings)
       generate_variables
       code = []
       @variables.each do |plugin, name|
 
-
         code << <<-CODE
-          @generated_objects[:#{name}] = #{plugin.compile_initializer}
+          @generated_objects[:#{name}] = #{plugin.compile_initializer(settings)}
           @#{plugin.plugin_type}s << @generated_objects[:#{name}]
         CODE
 
@@ -180,20 +180,20 @@ module LogStash; module Config; module AST
       return recursive_select_parent(PluginSection).first.variable(self)
     end
 
-    def compile_initializer
+    def compile_initializer(settings)
       # If any parent is a Plugin, this must be a codec.
 
       if attributes.elements.nil?
         return "plugin(#{plugin_type.inspect}, #{plugin_name.inspect})" << (plugin_type == "codec" ? "" : "\n")
       else
-        settings = attributes.recursive_select(Attribute).collect(&:compile).reject(&:empty?)
+        settings = attributes.recursive_select(Attribute).collect { |x| x.compile(settings) }.reject(&:empty?)
 
         attributes_code = "LogStash::Util.hash_merge_many(#{settings.map { |c| "{ #{c} }" }.join(", ")})"
         return "plugin(#{plugin_type.inspect}, #{plugin_name.inspect}, #{attributes_code})" << (plugin_type == "codec" ? "" : "\n")
       end
     end
 
-    def compile
+    def compile(settings)
       case plugin_type
       when "input"
         return "start_input(@generated_objects[:#{variable_name}])"
@@ -204,7 +204,7 @@ module LogStash; module Config; module AST
       when "output"
         return "targeted_outputs << @generated_objects[:#{variable_name}]\n"
       when "codec"
-        settings = attributes.recursive_select(Attribute).collect(&:compile).reject(&:empty?)
+        settings = attributes.recursive_select(Attribute).collect { |x| x.compile(settings) }.reject(&:empty?)
         attributes_code = "LogStash::Util.hash_merge_many(#{settings.map { |c| "{ #{c} }" }.join(", ")})"
         return "plugin(#{plugin_type.inspect}, #{plugin_name.inspect}, #{attributes_code})"
       end
@@ -255,13 +255,13 @@ module LogStash; module Config; module AST
   end
 
   class Name < Node
-    def compile
+    def compile(settings)
       return text_value.inspect
     end
   end
   class Attribute < Node
-    def compile
-      return %Q(#{name.compile} => #{value.compile})
+    def compile(settings)
+      return %Q(#{name.compile(settings)} => #{value.compile(settings)})
     end
   end
   class RValue < Node; end
@@ -274,28 +274,32 @@ module LogStash; module Config; module AST
   end
 
   class Bareword < Value
-    def compile
+    def compile(settings)
       return Unicode.wrap(text_value)
     end
   end
   class String < Value
-    def compile
-      return Unicode.wrap(text_value[1...-1])
+    def compile(settings)
+      if settings.get_setting("config.strings.support_escapes")
+        Unicode.wrap(LogStash::Config::StringEscapeStringEscape.process_escapes(text_value[1...-1]))
+      else
+        Unicode.wrap(text_value[1...-1])
+      end
     end
   end
   class RegExp < Value
-    def compile
+    def compile(settings)
       return "Regexp.new(" + Unicode.wrap(text_value[1...-1]) + ")"
     end
   end
   class Number < Value
-    def compile
+    def compile(settings)
       return text_value
     end
   end
   class Array < Value
-    def compile
-      return "[" << recursive_select(Value).collect(&:compile).reject(&:empty?).join(", ") << "]"
+    def compile(settings)
+      return "[" << recursive_select(Value).collect { |x| x.compile(settings) }.reject(&:empty?).join(", ") << "]"
     end
   end
   class Hash < Value
@@ -320,9 +324,9 @@ module LogStash; module Config; module AST
       values.find_all { |v| values.count(v) > 1 }.uniq
     end
 
-    def compile
+    def compile(settings)
       validate!
-      return "{" << recursive_select(HashEntry).collect(&:compile).reject(&:empty?).join(", ") << "}"
+      return "{" << recursive_select(HashEntry).collect { |x| x.compile(settings) }.reject(&:empty?).join(", ") << "}"
     end
   end
 
@@ -330,15 +334,15 @@ module LogStash; module Config; module AST
   end
 
   class HashEntry < Node
-    def compile
-      return %Q(#{name.compile} => #{value.compile})
+    def compile(settings)
+      return %Q(#{name.compile(settings)} => #{value.compile(settings)})
     end
   end
 
   class BranchOrPlugin < Node; end
 
   class Branch < Node
-    def compile
+    def compile(settings)
 
       # this construct is non obvious. we need to loop through each event and apply the conditional.
       # each branch of a conditional will contain a construct (a filter for example) that also loops through
@@ -379,41 +383,41 @@ module LogStash; module Config; module AST
   class BranchEntry < Node; end
 
   class If < BranchEntry
-    def compile
+    def compile(settings)
       children = recursive_inject { |e| e.is_a?(Branch) || e.is_a?(Plugin) }
-      return "if #{condition.compile} # if #{condition.text_value_for_comments}\n" \
-        << children.collect(&:compile).map { |s| s.split("\n", -1).map { |l| "  " + l }.join("\n") }.join("") << "\n"
+      return "if #{condition.compile(settings)} # if #{condition.text_value_for_comments}\n" \
+        << children.collect { |x| x.compile(settings) }.map { |s| s.split("\n", -1).map { |l| "  " + l }.join("\n") }.join("") << "\n"
     end
   end
   class Elsif < BranchEntry
-    def compile
+    def compile(settings)
       children = recursive_inject { |e| e.is_a?(Branch) || e.is_a?(Plugin) }
-      return "elsif #{condition.compile} # else if #{condition.text_value_for_comments}\n" \
-        << children.collect(&:compile).map { |s| s.split("\n", -1).map { |l| "  " + l }.join("\n") }.join("") << "\n"
+      return "elsif #{condition.compile(settings)} # else if #{condition.text_value_for_comments}\n" \
+        << children.collect { |x| x.compile(settings) }.map { |s| s.split("\n", -1).map { |l| "  " + l }.join("\n") }.join("") << "\n"
     end
   end
   class Else < BranchEntry
-    def compile
+    def compile(settings)
       children = recursive_inject { |e| e.is_a?(Branch) || e.is_a?(Plugin) }
       return "else\n" \
-        << children.collect(&:compile).map { |s| s.split("\n", -1).map { |l| "  " + l }.join("\n") }.join("") << "\n"
+        << children.collect { |x| x.compile(settings) }.map { |s| s.split("\n", -1).map { |l| "  " + l }.join("\n") }.join("") << "\n"
     end
   end
 
   class Condition < Node
-    def compile
+    def compile(settings)
       return "(#{super})"
     end
   end
 
   module Expression
-    def compile
+    def compile(settings)
       return "(#{super})"
     end
   end
 
   module NegativeExpression
-    def compile
+    def compile(settings)
       return "!(#{super})"
     end
   end
@@ -421,57 +425,57 @@ module LogStash; module Config; module AST
   module ComparisonExpression; end
 
   module InExpression
-    def compile
+    def compile(settings)
       item, list = recursive_select(LogStash::Config::AST::RValue)
-      return "(x = #{list.compile}; x.respond_to?(:include?) && x.include?(#{item.compile}))"
+      return "(x = #{list.compile(settings)}; x.respond_to?(:include?) && x.include?(#{item.compile(settings)}))"
     end
   end
 
   module NotInExpression
-    def compile
+    def compile(settings)
       item, list = recursive_select(LogStash::Config::AST::RValue)
-      return "(x = #{list.compile}; !x.respond_to?(:include?) || !x.include?(#{item.compile}))"
+      return "(x = #{list.compile(settings)}; !x.respond_to?(:include?) || !x.include?(#{item.compile(settings)}))"
     end
   end
 
   class MethodCall < Node
-    def compile
+    def compile(settings)
       arguments = recursive_inject { |e| [String, Number, Selector, Array, MethodCall].any? { |c| e.is_a?(c) } }
-      return "#{method.text_value}(" << arguments.collect(&:compile).join(", ") << ")"
+      return "#{method.text_value}(" << arguments.collect { |x| x.compile(settings) }.join(", ") << ")"
     end
   end
 
   class RegexpExpression < Node
-    def compile
+    def compile(settings)
       operator = recursive_select(LogStash::Config::AST::RegExpOperator).first.text_value
       item, regexp = recursive_select(LogStash::Config::AST::RValue)
       # Compile strings to regexp's
       if regexp.is_a?(LogStash::Config::AST::String)
         regexp = "/#{regexp.text_value[1..-2]}/"
       else
-        regexp = regexp.compile
+        regexp = regexp.compile(settings)
       end
-      return "(#{item.compile} #{operator} #{regexp})"
+      return "(#{item.compile(settings)} #{operator} #{regexp})"
     end
   end
 
   module ComparisonOperator
-    def compile
+    def compile(settings)
       return " #{text_value} "
     end
   end
   module RegExpOperator
-    def compile
+    def compile(settings)
       return " #{text_value} "
     end
   end
   module BooleanOperator
-    def compile
+    def compile(settings)
       return " #{text_value} "
     end
   end
   class Selector < RValue
-    def compile
+    def compile(settings)
       return "event.get(#{text_value.inspect})"
     end
   end

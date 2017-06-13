@@ -64,7 +64,7 @@ module LogStash; class BasePipeline
     parsed_config = grammar.parse(config_str)
     raise(ConfigurationError, grammar.failure_reason) if parsed_config.nil?
 
-    config_code = parsed_config.compile
+    config_code = parsed_config.compile(@settings)
 
     # config_code = BasePipeline.compileConfig(config_str)
 

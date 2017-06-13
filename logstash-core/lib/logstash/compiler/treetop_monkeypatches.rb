@@ -10,9 +10,10 @@ class Treetop::Runtime::SyntaxNode
     @ast_metadata ||= {}
     @ast_metadata[key] = value
   end
-  def compile
+
+  def compile(settings)
     return "" if elements.nil?
-    return elements.collect(&:compile).reject(&:empty?).join("")
+    return elements.collect { |x| x.compile(settings) }.reject(&:empty?).join("")
   end
 
   # Traverse the syntax tree recursively.
