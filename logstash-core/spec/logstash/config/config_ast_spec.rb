@@ -6,6 +6,12 @@ require "logstash/config/grammar"
 require "logstash/config/config_ast"
 
 describe LogStashConfigParser do
+  let(:settings) { LogStash::Settings.new }
+
+  before do
+    LogStash.register_settings(settings)
+  end
+
   context '#parse' do
     context "valid configuration" do
       it "should permit single-quoted attribute names" do
@@ -62,7 +68,7 @@ describe LogStashConfigParser do
       it "should compile successfully" do
         result = subject.parse(config)
         expect(result).not_to(be_nil)
-        expect { eval(result.compile) }.not_to(raise_error)
+        expect { eval(result.compile(settings)) }.not_to(raise_error)
       end
     end
 
@@ -77,11 +83,11 @@ describe LogStashConfigParser do
         }
       CONFIG
       subject { LogStashConfigParser.new }
-         
+
       it "should compile successfully" do
         result = subject.parse(config)
         expect(result).not_to(be_nil)
-        expect { eval(result.compile) }.not_to(raise_error)
+        expect { eval(result.compile(settings)) }.not_to(raise_error)
       end
     end
 
@@ -101,7 +107,7 @@ describe LogStashConfigParser do
           }
         ))
 
-        expect { config.compile }.to raise_error(LogStash::ConfigurationError, /Duplicate keys found in your configuration: \["message"\]/)
+        expect { config.compile(settings) }.to raise_error(LogStash::ConfigurationError, /Duplicate keys found in your configuration: \["message"\]/)
       end
 
       it "rejects duplicate keys in nested hash" do
@@ -120,7 +126,7 @@ describe LogStashConfigParser do
           }
         ))
 
-        expect { config.compile }.to raise_error(LogStash::ConfigurationError, /Duplicate keys found in your configuration: \["cool"\]/)
+        expect { config.compile(settings) }.to raise_error(LogStash::ConfigurationError, /Duplicate keys found in your configuration: \["cool"\]/)
       end
 
       it "rejects a key with multiple double quotes" do
@@ -147,10 +153,10 @@ describe LogStashConfigParser do
   context "when using two plugin sections of the same type" do
     let(:pipeline_klass) do
       Class.new do
-        def initialize(config)
+        def initialize(config, settings)
           grammar = LogStashConfigParser.new
           @config = grammar.parse(config)
-          @code = @config.compile
+          @code = @config.compile(settings)
           eval(@code)
         end
         def plugin(*args);end
@@ -166,7 +172,7 @@ describe LogStashConfigParser do
 
 
       it "should create a pipeline with both sections" do
-        generated_objects = pipeline_klass.new(config_string).instance_variable_get("@generated_objects")
+        generated_objects = pipeline_klass.new(config_string, settings).instance_variable_get("@generated_objects")
         filters = generated_objects.keys.map(&:to_s).select {|obj_name| obj_name.match(/^filter.+?_\d+$/) }
         expect(filters.size).to eq(2)
       end
@@ -181,14 +187,13 @@ describe LogStashConfigParser do
 
 
       it "should create a pipeline with both sections" do
-        generated_objects = pipeline_klass.new(config_string).instance_variable_get("@generated_objects")
+        generated_objects = pipeline_klass.new(config_string, settings).instance_variable_get("@generated_objects")
         outputs = generated_objects.keys.map(&:to_s).select {|obj_name| obj_name.match(/^output.+?_\d+$/) }
         expect(outputs.size).to eq(2)
       end
     end
   end
   context "when creating two instances of the same configuration" do
-
     let(:config_string) {
       "input { generator { } }
        filter {
@@ -201,10 +206,10 @@ describe LogStashConfigParser do
 
     let(:pipeline_klass) do
       Class.new do
-        def initialize(config)
+        def initialize(config, settings)
           grammar = LogStashConfigParser.new
           @config = grammar.parse(config)
-          @code = @config.compile
+          @code = @config.compile(settings)
           eval(@code)
         end
         def plugin(*args);end
@@ -213,8 +218,8 @@ describe LogStashConfigParser do
 
     describe "generated conditional functionals" do
       it "should be created per instance" do
-        instance_1 = pipeline_klass.new(config_string)
-        instance_2 = pipeline_klass.new(config_string)
+        instance_1 = pipeline_klass.new(config_string, settings)
+        instance_2 = pipeline_klass.new(config_string, settings)
         generated_method_1 = instance_1.instance_variable_get("@generated_objects")[:cond_func_1]
         generated_method_2 = instance_2.instance_variable_get("@generated_objects")[:cond_func_1]
         expect(generated_method_1).to_not be(generated_method_2)

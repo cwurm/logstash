@@ -123,7 +123,7 @@ module LogStash; module Config; module AST
 
               @logger.debug? && @logger.debug(\"Flushing\", :plugin => @generated_objects[:#{name}], :events => events.map { |x| x.to_hash  })
 
-              #{plugin.compile_starting_here.gsub(/^/, "  ")}
+              #{plugin.compile_starting_here(settings).gsub(/^/, "  ")}
 
               events.each{|e| block.call(e)}
             end
@@ -210,7 +210,7 @@ module LogStash; module Config; module AST
       end
     end
 
-    def compile_starting_here
+    def compile_starting_here(settings)
       return unless plugin_type == "filter" # only filter supported.
 
       expressions = [
@@ -243,7 +243,7 @@ module LogStash; module Config; module AST
           next false
         end
         if found && expressions.include?(element.class)
-          code << element.compile
+          code << element.compile(settings)
           next false
         end
         next false if branch_siblings.include?(element)
@@ -280,8 +280,8 @@ module LogStash; module Config; module AST
   end
   class String < Value
     def compile(settings)
-      if settings.get_setting("config.strings.support_escapes")
-        Unicode.wrap(LogStash::Config::StringEscapeStringEscape.process_escapes(text_value[1...-1]))
+      if settings.get_value("config.strings.support_escapes")
+        Unicode.wrap(LogStash::Config::StringEscape.process_escapes(text_value[1...-1]))
       else
         Unicode.wrap(text_value[1...-1])
       end
