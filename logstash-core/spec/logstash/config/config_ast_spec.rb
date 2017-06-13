@@ -148,6 +148,45 @@ describe LogStashConfigParser do
         expect(config).to be_nil
       end
     end
+
+    context "when config.strings.support_escapes" do
+      let(:parser) { LogStashConfigParser.new }
+
+      let(:processed_value)  { 'The computer says, "No"' }
+
+      let(:config) {
+        parser.parse(%q(
+          input {
+            foo {
+              bar => "The computer says, \"No\""
+            }
+          }
+        ))
+      }
+
+      let(:compiled_string) { eval(config.recursive_select(LogStash::Config::AST::String).first.compile(settings)) }
+
+      context "is enabled" do
+        before { settings.set_value("config.strings.support_escapes", true) }
+
+        it "should process escape sequences" do
+          expect(compiled_string).to be == processed_value
+        end
+      end
+
+      context "is default" do
+        it "should not process escape sequences" do
+          expect(compiled_string).not_to be == processed_value
+        end
+      end
+
+      context "is false" do
+        before { settings.set_value("config.strings.support_escapes", false) }
+        it "should not process escape sequences" do
+          expect(compiled_string).not_to be == processed_value
+        end
+      end
+    end
   end
 
   context "when using two plugin sections of the same type" do
