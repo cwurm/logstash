@@ -252,8 +252,8 @@ A string must be a single character sequence. Note that string values are
 enclosed in quotes, either double or single. 
 
 By default, escape sequences are not enabled. If you wish to use escape
-sequences such as `\t` and `\"`, you will need to set
-`config.strings.support_escapes: true` in your `logstash.yml`
+sequences in quoted strings such as `\t` and `\"`, you will need to set
+`config.support_escapes: true` in your `logstash.yml`
 
 
 Example:

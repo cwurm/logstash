@@ -280,7 +280,7 @@ module LogStash; module Config; module AST
   end
   class String < Value
     def compile(settings)
-      if settings.get_value("config.strings.support_escapes")
+      if settings.get_value("config.support_escapes")
         Unicode.wrap(LogStash::Config::StringEscape.process_escapes(text_value[1...-1]))
       else
         Unicode.wrap(text_value[1...-1])

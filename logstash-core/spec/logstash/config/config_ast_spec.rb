@@ -149,7 +149,7 @@ describe LogStashConfigParser do
       end
     end
 
-    context "when config.strings.support_escapes" do
+    context "when config.support_escapes" do
       let(:parser) { LogStashConfigParser.new }
 
       let(:processed_value)  { 'The computer says, "No"' }
@@ -167,7 +167,7 @@ describe LogStashConfigParser do
       let(:compiled_string) { eval(config.recursive_select(LogStash::Config::AST::String).first.compile(settings)) }
 
       context "is enabled" do
-        before { settings.set_value("config.strings.support_escapes", true) }
+        before { settings.set_value("config.support_escapes", true) }
 
         it "should process escape sequences" do
           expect(compiled_string).to be == processed_value
@@ -181,7 +181,7 @@ describe LogStashConfigParser do
       end
 
       context "is false" do
-        before { settings.set_value("config.strings.support_escapes", false) }
+        before { settings.set_value("config.support_escapes", false) }
         it "should not process escape sequences" do
           expect(compiled_string).not_to be == processed_value
         end

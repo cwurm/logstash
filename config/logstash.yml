@@ -88,7 +88,7 @@
 # When enabled, process escaped characters such as \n and \" in strings in the
 # pipeline configuration files.
 #
-# config.strings.support_escapes: false
+# config.support_escapes: false
 #
 # ------------ Module Settings ---------------
 # Define modules here.  Modules definitions must be defined as an array.
